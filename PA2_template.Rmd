@@ -1,0 +1,200 @@
+---
+title: "Reproducible Research Project 2 - US NOAA Storm Database: health and economic
+  consequences of severe weather"
+author: "Brandon Robinson"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 80
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+The second project of the Coursera course Reproducible Data, requires the
+student to analyze the health and economic consequences of severe weather
+between the years 1950 - 2011. The data to be analyzed will be provided by US
+NOAA database which tracks weather events across the US. The questions to answer
+are as follows:
+
+1.  Across the United States, which types of events (as indicated by the
+    *EVTYPE* variable) are most harmful with respect to population health?
+2.  Across the United States, which types of events have the greatest economic
+    consequences?
+
+## Loading and Pre-Processing the Data
+
+First the following packages will be loaded before running further code
+
+```{r, echo = TRUE} 
+library(R.utils)
+library(data.table) 
+library(dplyr) 
+library(ggplot2) 
+library(tidyr)
+```
+Next, the storm data file is downloaded and stored
+
+```{r, echo = TRUE} 
+if (!file.exists("stormdata.csv.bz2")) { 
+        fileURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+        download.file(fileURL, "stormdata.csv.bz2")
+        bunzip2("stormdata.csv.bz2", "stormdata.csv", remove=FALSE)
+}
+storm <- data.table::fread("stormdata.csv", fill=TRUE, header=TRUE) 
+head(storm)
+```
+
+Review the column names and extract only the required names for analysis 
+```{r, echo = TRUE}  
+names(storm)
+stormdata <- storm %>% select(c("EVTYPE","FATALITIES","INJURIES","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP"))
+str(stormdata)
+```
+
+The remaining variables for analysis are: 
+
+1. EVTYPE - storm event type 
+2. FATALITIES - fatalities per event 
+3. INJURIES - injuries per event 
+4. PROPDMG -property damage cost 
+5. PROPDMGEXP - property damage exponent 
+6. CROPDMG - cropdamage cost 
+7. CROPDMGEXP - crop damage exponent
+
+## Processing Data
+
+The next step is to process the data based on the questions to be answered. The
+first question asks which storm events are most harmful with respect to
+population health.
+
+### Question 1
+
+The data will be processed by grouping event type with the total injuries and
+deaths. Then, the data will be grouped in descending order to clearly delineate
+the most harmful storm type. The goal is to get the data on the same plot for
+easier comparison
+
+```{r, echo = TRUE} 
+totalInjuries <- aggregate(INJURIES ~ EVTYPE, data = stormdata, FUN = sum)
+topInjuries <- totalInjuries[order(-totalInjuries$INJURIES), ] 
+totalFatalities <- aggregate(FATALITIES ~ EVTYPE, data = stormdata, FUN = sum)
+topFatalities <- totalFatalities[order(-totalFatalities$FATALITIES), ]
+
+#### combine the injury and fatality data to one table and order the top 10
+
+topHealth <- merge(topInjuries, topFatalities, all.x = TRUE)
+topHealth[is.na(topHealth)] <- 0
+topHealth2 <- topHealth[order(-topHealth$INJURIES),][1:10,]
+topHealth2 <- gather(topHealth2,key=type, value=value, INJURIES,FATALITIES)
+```
+
+### Question 2
+
+The second question asks which storm types have the greatest economic
+consequences. The methodology to determine the economic impact will be similar
+to the injuries and fatalities, but with a few extra steps to aggregate the
+costs. The data will be combined in order to be viewable on the same plot.
+
+The first step is to create a function to set the property damage exponents to
+real numbers. This will allow us to collect the damage costs to property and
+crops 
+
+```{r, echo = TRUE}
+cost <- function(x) {
+        if (x == "H")
+                100
+        else if (x == "K")
+                1000
+        else if (x == "M")
+                1e+06
+        else if (x == "B")
+                1e+09
+        else if (x == "")
+                1
+        else if (x == "m")
+                1e+06
+        else if (x == "0")
+                1
+        else if (x == "5")
+                1e+05
+        else if (x == "6")
+                1e+06
+        else if (x == "4")
+                10000
+        else if (x == "2")
+                100
+        else if (x == "3")
+                1000
+        else if (x == "h")
+                100
+        else if (x == "7")
+                1e+07
+        else if (x == "1")
+                10
+        else if (x == "8")
+                1e+08
+        else
+                0
+}
+```
+
+Next the data will be processed by grouping event type with property and crop
+damage costs. Then, the data will be grouped in descending order to clearly
+delineate the greatest economic impact.
+
+```{r, echo = TRUE} 
+econdata <- storm %>% select(c("EVTYPE","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP"))
+econdata$Property <-  econdata$PROPDMG*sapply(econdata$PROPDMGEXP, FUN = cost)
+econdata$Crops <- econdata$CROPDMG*sapply(econdata$CROPDMGEXP, FUN = cost)
+dmgValue <- aggregate(Property~EVTYPE,data = econdata, FUN = sum, na.rm = TRUE)
+dmgValue <- dmgValue[with(dmgValue,order(-Property)),]
+cropValue <- aggregate(Crops~EVTYPE,data = econdata, FUN = sum, na.rm = TRUE)
+cropValue <- cropValue[with(cropValue,order(-Crops)),]
+
+#### combine economic losses into one table and order the top 10
+
+topDmg <- merge(dmgValue, cropValue, all.x = TRUE)
+topDmg[is.na(topDmg)] <- 0
+topDmg2 <- topDmg[order(-topDmg$Property),][1:10,]
+topDmg2 <- gather(topDmg2,key=type, value=value, Property,Crops)
+```
+
+## Results and Conclusions
+
+The first question asked for the events which caused the most fatalities and
+injuries. The below plot represents the top 10 storm events which were most
+harmful to population health
+
+```{r, echo = TRUE} 
+damagePlot <- ggplot(data=topHealth2, aes(reorder(EVTYPE, -value), value, fill=type)) +
+        geom_bar(position = "dodge", stat="identity") + 
+        labs(x="Storm Type", y="Count") +
+        theme(axis.text.x = element_text(angle = 45, vjust=0.5)) +
+        ggtitle("Total Number of Injuries and Fatalities of the top 10 storm types")
+print(damagePlot)
+```
+
+
+Based on the plot, Tornados had the greatest impact on population health.
+
+The second question asked for the storm events which had the greatest economic
+consequences. The below plot represents the top 10 storm events with the
+greatest economic consequences.
+
+```{r, echo = TRUE}  
+costPlot <- ggplot(data=topDmg2, aes(reorder(EVTYPE, -value), value, fill=type)) +
+        geom_bar(position = "dodge", stat="identity") + 
+        labs(x="Storm Type", y="Cost") +
+        theme(axis.text.x = element_text(angle = 45, vjust=0.5)) +
+        ggtitle("Total Property and Crop Damage Cost of the top 10 storm types")
+print(costPlot)
+```
+
+
+Based on the plot, Floods had the greatest economic loss impact in
+the US
